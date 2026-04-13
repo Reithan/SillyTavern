@@ -412,9 +412,18 @@ async function multiQueryCollection(directories, collectionIds, source, sourceSe
         const store = await getIndex(directories, collectionId, source, sourceSettings);
         const result = await store.queryItems(vector, topK);
         results.push(...result.map(result => ({ collectionId, result })));
+        // Progressive merge: keep only the top-K candidates so far.
+        // A chunk ranked > K within its own collection cannot appear in the
+        // global top-K (it is already beaten by K items from that collection
+        // alone), so per-collection topK is the correct per-query limit.
+        // This bounds in-memory state to topK * 2 regardless of collection count.
+        if (results.length > topK) {
+            results.sort((a, b) => b.result.score - a.result.score);
+            results.splice(topK);
+        }
     }
 
-    // Sort results by descending similarity, apply threshold, and take top K
+    // Final sort, threshold filter, and slice to topK
     const sortedResults = results
         .sort((a, b) => b.result.score - a.result.score)
         .filter(x => x.result.score >= threshold)
